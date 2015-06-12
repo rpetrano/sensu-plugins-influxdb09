@@ -25,8 +25,9 @@
 #   for details.
 #
 
+require_relative '../lib/sensu-plugins-influxdb'
 require 'sensu-handler'
-require 'influxdb'
+require 'date'
 
 #
 # Sensu To Influxdb
@@ -40,23 +41,30 @@ class SensuToInfluxDB < Sensu::Handler
     influxdb_user   = settings['influxdb']['username']
     influxdb_pass   = settings['influxdb']['password']
     influxdb_db     = settings['influxdb']['database']
+    influxdb_rp     = settings['influxdb']['retention_policy']
 
-    influxdb_data = InfluxDB::Client.new influxdb_db, host: influxdb_server,
-                                                      username: influxdb_user,
-                                                      password: influxdb_pass,
-                                                      port: influxdb_port,
-                                                      server: influxdb_server
-    mydata = []
-    @event['check']['output'].each do |metric|
-      m = metric.split
-      next unless m.count == 3
-      key = m[0].split('.', 2)[1]
-      key.gsub!('.', '_')
-      value = m[1].to_f
-      mydata = { host: @event['client']['name'], value: value,
-                 ip: @event['client']['address']
-               }
-      influxdb_data.write_point(key, mydata)
-    end
+    influxdb_client = InfluxDB::Client.new host: influxdb_server,
+                                           port: influxdb_port,
+                                           username: influxdb_user,
+                                           password: influxdb_pass
+
+    client_name = @event['client']['name']
+    metric_name = @event['check']['name']
+    timestamp = DateTime.strptime(@event['check']['executed'].to_s, '%s')
+
+    metric_raw = @event['check']['output']
+    metrics = metric_raw.split("\n")
+      .map(&:split)
+      .select { |(k, v, *_)| k != nil and v.length != 0 }
+      .map { |(k, v, *_)| [ k.gsub(client_name + '.', ''), v.to_f ] }
+
+    point = InfluxDB::Point.new measurement: metric_name,
+                                tags: { host: client_name },
+                                fields: Hash[metrics],
+                                datetime: timestamp
+
+    influxdb_client.write points: [point],
+                          database: influxdb_db,
+                          retention_policy: influxdb_rp
   end
 end
