@@ -50,20 +50,19 @@ class SensuToInfluxDB < Sensu::Handler
 
     client_name = @event['client']['name']
     metric_name = @event['check']['name']
-    timestamp = DateTime.strptime(@event['check']['executed'].to_s, '%s')
 
     metric_raw = @event['check']['output']
     metrics = metric_raw.split("\n")
       .map(&:split)
-      .select { |(k, v, *_)| k != nil and v.length != 0 }
-      .map { |(k, v, *_)| [ k.gsub(client_name + '.', ''), v.to_f ] }
+      .select { |(*x)| x.length == 3 }
+      .map do |(k, v, time)|
+        InfluxDB::Point.new measurement: k.gsub(client_name + '.', ''),
+                            tags: { host: client_name, metric: metric_name },
+                            fields: { value: v.to_f },
+                            datetime: DateTime.strptime(time.to_s, '%s')
+      end
 
-    point = InfluxDB::Point.new measurement: metric_name,
-                                tags: { host: client_name },
-                                fields: Hash[metrics],
-                                datetime: timestamp
-
-    influxdb_client.write points: [point],
+    influxdb_client.write points: metrics,
                           database: influxdb_db,
                           retention_policy: influxdb_rp
   end
